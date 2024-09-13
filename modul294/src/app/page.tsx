@@ -1,6 +1,6 @@
 'use client';
 
-import {useState, useEffect} from 'react';
+import { useState, useEffect } from 'react';
 import Image from "next/image";
 
 export default function HomePage() {
@@ -8,7 +8,7 @@ export default function HomePage() {
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState(null);
     const [search, setSearch] = useState('');
-    const [offset, setOffset] = useState(151);
+    const [offset, setOffset] = useState(0);
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const [selectedTypes, setSelectedTypes] = useState([]);
     const [filteredPokemons, setFilteredPokemons] = useState([]);
@@ -33,40 +33,50 @@ export default function HomePage() {
         bug: '#A8B820',
         ghost: '#705898',
         steel: '#B8B8D0',
-        death: '#4B0082',
-        time: '#00CED1',
-        light: '#FFFFE0',
-        cosmic: '#9370DB',
-        sound: '#FF6347',
-        space: '#778899',
+
     };
 
-    // Function to fetch Pokémon with offset and limit
+    // Fetch function to get Pokémon data based on selected types or offset
     const fetchPokemon = async (offset = 0, limit = 151) => {
         try {
             setLoading(true);
-            const res = await fetch(`https://pokeapi.co/api/v2/pokemon?offset=${offset}&limit=${limit}`);
-            if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
-            const data = await res.json();
+            let fetchedPokemons = [];
 
-            // Fetch detailed data for each Pokémon to get images and names in German
-            const detailedPokemonPromises = data.results.map(async (pokemon) => {
+            // Fetch Pokémon by types if selected
+            if (selectedTypes.length > 0) {
+                // Fetch Pokémon for each selected type
+                for (const type of selectedTypes) {
+                    const res = await fetch(`https://pokeapi.co/api/v2/type/${type}`);
+                    if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                    const data = await res.json();
+                    fetchedPokemons = [...fetchedPokemons, ...data.pokemon.map(p => p.pokemon)];
+                }
+                // Remove duplicates by Pokémon URL
+                fetchedPokemons = Array.from(new Set(fetchedPokemons.map(p => p.url)))
+                    .map(url => fetchedPokemons.find(p => p.url === url));
+            } else {
+                // Fetch default Pokémon set if no types are selected
+                const res = await fetch(`https://pokeapi.co/api/v2/pokemon?offset=${offset}&limit=${limit}`);
+                if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                const data = await res.json();
+                fetchedPokemons = data.results;
+            }
+
+            // Fetch detailed data for each Pokémon
+            const detailedPokemonPromises = fetchedPokemons.map(async (pokemon) => {
                 const res = await fetch(pokemon.url);
                 if (!res.ok) throw new Error(`Failed to fetch details for ${pokemon.name}`);
                 const detailedData = await res.json();
 
-                // Fetch species data to get names in German
+                // Fetch species data to get German names
                 const speciesRes = await fetch(detailedData.species.url);
                 if (!speciesRes.ok) throw new Error(`Failed to fetch species details for ${detailedData.name}`);
                 const speciesData = await speciesRes.json();
 
-                // Get the German name from the species data
                 const germanName = speciesData.names.find(name => name.language.name === 'de')?.name || detailedData.name;
 
-                // Extract Pokémon types
                 const types = detailedData.types.map(typeInfo => typeInfo.type.name);
 
-                // Return Pokémon data with the German name and types
                 return {
                     ...detailedData,
                     name: germanName,
@@ -75,7 +85,7 @@ export default function HomePage() {
             });
 
             const detailedPokemon = await Promise.all(detailedPokemonPromises);
-            setPokemons((prevPokemons) => [...prevPokemons, ...detailedPokemon]);
+            setPokemons(detailedPokemon);
         } catch (error) {
             console.error('Error fetching Pokémon:', error);
             setError(error);
@@ -86,78 +96,62 @@ export default function HomePage() {
     };
 
     useEffect(() => {
-        fetchPokemon(0, 151); // Initial fetch of the first 151 Pokémon
-        setOffset(151); // Update offset after the first fetch
-    }, []);
+        // Fetch Pokémon whenever the selected types change
+        setPokemons([]); // Clear current list to show only relevant Pokémon
+        fetchPokemon(0, 151);
+    }, [selectedTypes]); // Trigger fetch when selectedTypes changes
 
-    // Update filteredPokemons when search or selectedTypes changes
+    // Update filteredPokemons based on the search input
     useEffect(() => {
-        console.log('Filtering with selected types:', selectedTypes); // Debugging output
-        const filtered = pokemons.filter((pokemon) => {
-            const matchesSearch = pokemon.name.toLowerCase().includes(search);
-            const matchesType = selectedTypes.length > 0
-                ? selectedTypes.some(type => pokemon.types.includes(type))
-                : true; // Show all if no type is selected
-            return matchesSearch && matchesType;
-        });
+        const filtered = pokemons.filter((pokemon) =>
+            pokemon.name.toLowerCase().includes(search.toLowerCase()) &&
+            (selectedTypes.length === 0 || selectedTypes.every(type => pokemon.types.includes(type)))
+        );
         setFilteredPokemons(filtered);
-        console.log('Filtered Pokemons:', filtered); // Debugging output
-    }, [search, selectedTypes, pokemons]);
+    }, [search, pokemons, selectedTypes]);
 
-
-    // Example check to see the types of each Pokémon
-    useEffect(() => {
-        pokemons.forEach(pokemon => {
-            console.log(pokemon.name, pokemon.types); // Output Pokémon name and types
-        });
-    }, [pokemons]);
-
-
-    // Handle search input
     const handleSearch = (e) => {
         setSearch(e.target.value.toLowerCase());
     };
 
-    // Handle type selection
-    // Check if the handleTypeSelect is updating selectedTypes correctly
     const handleTypeSelect = (type) => {
+        // Toggle type selection, limit to 2 types
         setSelectedTypes(prevTypes => {
-            const newTypes = prevTypes.includes(type)
-                ? prevTypes.filter(t => t !== type)  // Remove type if already selected
-                : [...prevTypes, type];              // Add type if not selected
-            console.log('Selected Types:', newTypes); // Debugging output
-            return newTypes;
+            if (prevTypes.includes(type)) {
+                return prevTypes.filter(t => t !== type); // Remove type if already selected
+            } else if (prevTypes.length < 2) {
+                return [...prevTypes, type]; // Add type if less than 2 selected
+            }
+            return prevTypes; // Do nothing if 2 types are already selected
         });
     };
-    // Function to handle loading more Pokémon
-    const loadMorePokemon = () => {
-        setIsLoadingMore(true);
-        fetchPokemon(offset, 100); // Use the current offset and limit
-        setOffset(offset + 100); // Update offset correctly after fetching more Pokémon
+
+    const resetTypes = () => {
+        setSelectedTypes([]); // Clear selected types
+        setOffset(0); // Reset offset
+        fetchPokemon(0, 151); // Fetch default Pokémon list
     };
 
-    if (loading && pokemons.length === 0) {
-        return <p className="text-center text-lg text-blue-500">Loading the Pokemon list...</p>;
-    }
-
-    if (error) {
-        return <p className="text-center text-lg text-red-500">{error.message}</p>;
-    }
-
-    // List of Pokémon types for visual display
-    const pokemonTypes = Object.keys(typeColors);
+    const loadMorePokemon = () => {
+        setIsLoadingMore(true);
+        setOffset(prevOffset => prevOffset + 100);
+        fetchPokemon(offset + 100, 100);
+    };
 
     return (
         <main className="p-6 relative">
-            <iframe className="border-radius:12px"
-                    src="https://open.spotify.com/embed/track/4es7tZLsvmqc8kpyHOtHDI?utm_source=generator&theme=0"
-                    width="100%"
-                    height="252"
-                    allowFullScreen=""
-                    allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
-                    loading="lazy">
-            </iframe>
-            <h1 className="text-3xl font-bold mb-4">Welcome to the Pokemon App</h1>
+            <iframe
+                className="rounded-md mb-6"
+                src="https://open.spotify.com/embed/track/4es7tZLsvmqc8kpyHOtHDI?utm_source=generator&theme=0"
+                width="100%"
+                height="252"
+                allowFullScreen=""
+                allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+                loading="lazy"
+            ></iframe>
+
+            {/* eslint-disable-next-line react/no-unescaped-entities */}
+            <h1 className="text-3xl font-bold mb-4 flex justify-center">Willkommen zu Flo's Pokedex</h1>
 
             <input
                 type="text"
@@ -167,8 +161,8 @@ export default function HomePage() {
                 className="w-full p-2 mb-4 border border-gray-300 rounded text-black"
             />
 
-            <div className="flex flex-wrap gap-2 mb-4">
-                {pokemonTypes.map((type) => (
+            <div className="flex flex-wrap gap-2 mb-4 justify-center pl-20 pr-20">
+                {Object.keys(typeColors).map((type) => (
                     <button
                         key={type}
                         onClick={() => handleTypeSelect(type)}
@@ -180,63 +174,88 @@ export default function HomePage() {
                             color: 'white',
                             textShadow: '0px 0px 2px black',
                             border: '1px solid black',
-                            minWidth: '60px',
+                            minWidth: '80px', // Setze die minimale Breite
+                            maxWidth: '120px', // Optionale maximale Breite
                             textAlign: 'center',
                             cursor: 'pointer',
                         }}
+                        disabled={selectedTypes.length >= 2 && !selectedTypes.includes(type)}
                     >
                         {type.charAt(0).toUpperCase() + type.slice(1)}
                     </button>
                 ))}
             </div>
 
-            {search && filteredPokemons.length === 0 && (
-                <p className="text-center text-red-500">No results found for {search}</p>
-            )}
-            <ul className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {filteredPokemons.map((pokemon, index) => (
-                    <li key={`${pokemon.id}-${index}`} className="text-center p-4 border rounded shadow">
-                        <a href={`/pokemon/${pokemon.id}`}>
-                            <Image
-                                src={pokemon.sprites.front_default}
-                                alt={pokemon.name}
-                                width={96}
-                                height={96}
-                                className="mx-auto mb-2"
-                            />
-                            <p className="text-lg capitalize">{pokemon.name}</p>
-                            <div className="flex justify-center gap-2 mt-2">
-                                {pokemon.types.map((type) => (
-                                    <span
-                                        key={type}
-                                        className="px-2 py-1 rounded"
-                                        style={{
-                                            backgroundColor: typeColors[type],
-                                            color: 'white',
-                                            textShadow: '0px 0px 2px black',
-                                            border: '1px solid black',
-                                            textAlign: 'center',
-                                            cursor: 'pointer',
-                                        }}
-                                    >
-                            {type.charAt(0).toUpperCase() + type.slice(1)}
-                        </span>
-                                ))}
-                            </div>
-                        </a>
-                    </li>
-                ))}
-            </ul>
-
-            <div className="text-center mt-4">
+            <div className="mb-4 flex items-center gap-4">
                 <button
-                    onClick={loadMorePokemon}
-                    className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
-                    disabled={isLoadingMore}
+                    onClick={resetTypes}
+                    className="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600"
                 >
-                    {isLoadingMore ? 'Loading...' : 'Load More Pokémon'}
+                    Reset Types
                 </button>
+                <p className="text-lg">
+                    Aktuelle Typen Suche: {selectedTypes.length > 0 ? selectedTypes.join(' und ') : 'Keine ausgewählt'}
+                </p>
             </div>
+
+            {loading && pokemons.length === 0 ? (
+                <p className="text-center text-lg text-blue-500">Loading the Pokemon list...</p>
+            ) : (
+                <>
+                    {search && filteredPokemons.length === 0 && (
+                        <p className="text-center text-red-500">No results found for {search}</p>
+                    )}
+                    <ul className="grid grid-cols-1 gap-4 md:grid-cols-3 lg:grid-cols-6">
+                        {filteredPokemons.map((pokemon, index) => (
+                            <li key={`${pokemon.id}-${index}`} className="text-center p-4 border rounded shadow">
+                                <a href={`/pokemon/${pokemon.id}` } target="_blank" rel="noopener noreferrer">
+                                    {pokemon.sprites.front_default ? (
+                                        <Image
+                                            src={pokemon.sprites.front_default}
+                                            alt={pokemon.name}
+                                            width={150}
+                                            height={150}
+                                            className="mx-auto mb-2"
+                                        />
+                                    ) : (
+                                        <p className="text-center text-gray-500">No Image Available</p>
+                                    )}
+                                    <p className="text-lg capitalize">{pokemon.name}</p>
+                                    <div className="flex justify-center gap-2 mt-2">
+                                        {pokemon.types.map((type) => (
+                                            <span
+                                                key={type}
+                                                className="px-2 py-1 rounded"
+                                                style={{
+                                                    backgroundColor: typeColors[type],
+                                                    color: 'white',
+                                                    textShadow: '0px 0px 2px black',
+                                                    border: '1px solid black',
+                                                    textAlign: 'center',
+                                                    cursor: 'pointer',
+                                                }}
+                                            >
+                                                {type.charAt(0).toUpperCase() + type.slice(1)}
+                                            </span>
+                                        ))}
+                                    </div>
+                                </a>
+                            </li>
+                        ))}
+                    </ul>
+                    {pokemons.length > 0 && (
+                        <div className="text-center mt-4">
+                            <button
+                                onClick={loadMorePokemon}
+                                className="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600"
+                                disabled={isLoadingMore}
+                            >
+                                {isLoadingMore ? 'Loading...' : 'Load More Pokémon'}
+                            </button>
+                        </div>
+                    )}
+                </>
+            )}
         </main>
     );
 }
